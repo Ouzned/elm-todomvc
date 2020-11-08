@@ -85,16 +85,16 @@ removeTodo id (TodoList todos) =
 
 mapTodo : Int -> (TodoRecord -> TodoRecord) -> TodoList -> TodoList
 mapTodo id f (TodoList todos) =
-    List.map
-        (\todo ->
-            if todo.id /= id then
-                todo
+    TodoList <|
+        List.map
+            (\todo ->
+                if todo.id /= id then
+                    todo
 
-            else
-                f todo
-        )
-        todos
-        |> TodoList
+                else
+                    f todo
+            )
+            todos
 
 
 completeTodo : Int -> TodoList -> TodoList
@@ -114,12 +114,17 @@ getAllTodos (TodoList list) =
 
 getActiveTodos : TodoList -> List Todo
 getActiveTodos list =
-    List.filter (isCompleted >> not) (getAllTodos list)
+    List.filter (not << isCompleted) (getAllTodos list)
 
 
 getCompletedTodos : TodoList -> List Todo
 getCompletedTodos list =
     List.filter isCompleted (getAllTodos list)
+
+
+clearCompleted : TodoList -> TodoList
+clearCompleted (TodoList list) =
+    TodoList <| List.filter (\todo -> todo.status /= Completed) list
 
 
 isCompleted : Todo -> Bool
@@ -153,6 +158,7 @@ type Msg
     | UrlChanged Url.Url
     | LinkClicked Browser.UrlRequest
     | FieldChanged String
+    | ClearCompleted
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -198,6 +204,9 @@ update msg model =
                 Browser.External href ->
                     ( model, Nav.load href )
 
+        ClearCompleted ->
+            ( { model | todos = clearCompleted model.todos }, Cmd.none )
+
 
 
 ---- ROUTE ----
@@ -236,22 +245,19 @@ parseRoute url =
 ---- VIEW ----
 
 
-viewIfHasTodo : TodoList -> Html Msg -> Html Msg
-viewIfHasTodo list msg =
-    viewIf (hasTodo list) msg
-
-
 view : Model -> Browser.Document Msg
 view model =
-    { title = "TodoMVC"
+    let
+        viewIfHasTodo msg =
+            viewIf (hasTodo model.todos) msg
+    in
+    { title = "Elm • TodoMVC"
     , body =
         [ div [ class "todomvc-wrapper" ]
             [ section
                 [ class "todoapp" ]
-                [ viewHeader model.fieldText
-                , viewIfHasTodo model.todos (viewTodos model)
-                , viewIfHasTodo model.todos (viewFooter model)
-                ]
+              <|
+                List.map viewIfHasTodo [ viewTodos model, viewFooter model ]
             ]
         ]
     }
@@ -308,8 +314,10 @@ viewTodo todo =
         label =
             todoLabel todo
     in
-    li [ attributeIf (isCompleted todo) (class "completed") ]
-        [ div [ class "view" ]
+    li
+        [ attributeIf (isCompleted todo) (class "completed") ]
+        [ div
+            [ class "view" ]
             [ input
                 [ type_ "checkbox"
                 , class "toggle"
@@ -318,35 +326,46 @@ viewTodo todo =
                 , attributeIf (isCompleted todo) (checked True)
                 ]
                 []
-            , Html.label [] [ text label ]
-            , button [ class "destroy", onClick (DeleteTodo id) ] []
+            , Html.label
+                []
+                [ text label ]
+            , button
+                [ class "destroy", onClick (DeleteTodo id) ]
+                []
             ]
         ]
 
 
-viewFooter : Model -> Html msg
+viewFooter : Model -> Html Msg
 viewFooter { todos, route } =
+    let
+        completed =
+            todos
+                |> getCompletedTodos
+                |> List.length
+
+        active =
+            todos
+                |> getActiveTodos
+                |> List.length
+    in
     footer
         [ class "footer" ]
-        [ viewCount todos
+        [ viewCount active
         , viewFilters route
+        , viewReset completed
         ]
 
 
-viewCount : TodoList -> Html msg
-viewCount list =
+viewCount : Int -> Html msg
+viewCount count =
     let
-        count =
-            list
-                |> getActiveTodos
-                |> length
-
         countLabel =
-            if count > 1 then
-                " items"
+            if count == 1 then
+                " item"
 
             else
-                " item"
+                " items"
     in
     span
         [ class "todo-count" ]
@@ -362,23 +381,40 @@ viewCount list =
         ]
 
 
+viewReset : Int -> Html Msg
+viewReset completed =
+    button
+        [ class "clear-completed", onClick ClearCompleted ]
+        [ text <| "Clear completed (" ++ String.fromInt completed ++ ")" ]
+
+
 viewFilters : Route -> Html msg
 viewFilters route =
     ul
         [ class "filters" ]
-        [ viewLink "#/" "All" <| route == AllTodos
-        , viewLink "#/active" "Active" <| route == ActiveTodos
-        , viewLink "#/completed" "Completed" <| route == CompletedTodos
-        ]
+    <|
+        List.map
+            (viewLink route)
+            [ Link "#/" "All" AllTodos
+            , Link "#/active" "Active" ActiveTodos
+            , Link "#/completed" "Completed" CompletedTodos
+            ]
 
 
-viewLink : String -> String -> Bool -> Html msg
-viewLink path label isActive =
+type alias Link =
+    { path : String
+    , label : String
+    , route : Route
+    }
+
+
+viewLink : Route -> Link -> Html msg
+viewLink currentRoute { path, label, route } =
     li
         []
         [ a
             [ href path
-            , attributeIf isActive <| class "selected"
+            , attributeIf (route == currentRoute) (class "selected")
             ]
             [ text label ]
         ]
