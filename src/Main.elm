@@ -48,7 +48,9 @@ type Status
 
 init : Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init url key =
-    ( Model emptyTodoList key (parseRoute url) "", Cmd.none )
+    ( Model emptyTodoList key (parseRoute url) ""
+    , Cmd.none
+    )
 
 
 emptyTodoList : TodoList
@@ -186,18 +188,32 @@ update msg model =
             )
 
         DeleteTodo id ->
-            ( { model | todos = removeTodo id model.todos }, Cmd.none )
+            ( { model
+                | todos = removeTodo id model.todos
+              }
+            , Cmd.none
+            )
 
         FieldChanged text ->
-            ( { model | fieldText = text }, Cmd.none )
+            ( { model
+                | fieldText = text
+              }
+            , Cmd.none
+            )
 
         UrlChanged url ->
-            ( { model | route = parseRoute url }, Cmd.none )
+            ( { model
+                | route = parseRoute url
+              }
+            , Cmd.none
+            )
 
         LinkClicked urlRequest ->
             case urlRequest of
                 Browser.Internal url ->
-                    ( { model | route = parseRoute url }
+                    ( { model
+                        | route = parseRoute url
+                      }
                     , Nav.pushUrl model.key (Url.toString url)
                     )
 
@@ -205,7 +221,11 @@ update msg model =
                     ( model, Nav.load href )
 
         ClearCompleted ->
-            ( { model | todos = clearCompleted model.todos }, Cmd.none )
+            ( { model
+                | todos = clearCompleted model.todos
+              }
+            , Cmd.none
+            )
 
 
 
@@ -257,7 +277,12 @@ view model =
             [ section
                 [ class "todoapp" ]
               <|
-                List.map viewIfHasTodo [ viewTodos model, viewFooter model ]
+                [ viewHeader model.fieldText ]
+                    ++ List.map
+                        viewIfHasTodo
+                        [ viewTodos model
+                        , viewFooter model
+                        ]
             ]
         ]
     }
@@ -307,13 +332,6 @@ viewTodos { todos, route } =
 
 viewTodo : Todo -> Html Msg
 viewTodo todo =
-    let
-        id =
-            todoId todo
-
-        label =
-            todoLabel todo
-    in
     li
         [ attributeIf (isCompleted todo) (class "completed") ]
         [ div
@@ -321,16 +339,16 @@ viewTodo todo =
             [ input
                 [ type_ "checkbox"
                 , class "toggle"
-                , onCheck (CheckTodo id)
+                , onCheck (CheckTodo <| todoId todo)
                 , checked False
                 , attributeIf (isCompleted todo) (checked True)
                 ]
                 []
             , Html.label
                 []
-                [ text label ]
+                [ text <| todoLabel todo ]
             , button
-                [ class "destroy", onClick (DeleteTodo id) ]
+                [ class "destroy", onClick (DeleteTodo <| todoId todo) ]
                 []
             ]
         ]
