@@ -1,4 +1,4 @@
-module Main exposing (..)
+port module Main exposing (..)
 
 import Browser
 import Browser.Navigation as Nav
@@ -9,10 +9,38 @@ import Html.Attributes.Extra exposing (..)
 import Html.Events exposing (..)
 import Html.Extra exposing (..)
 import Html.Lazy exposing (lazy, lazy2)
+import Json.Decode as Decode
+import Json.Encode as Encode
 import List
 import String
 import Url
 import Url.Parser exposing (..)
+
+
+
+---- PROGRAM ----
+
+
+main : Program () Model Msg
+main =
+    Browser.application
+        { view = view
+        , init = \_ -> init
+        , update = updateWithStorage
+        , subscriptions = \_ -> todoReader ReceivedTodos
+        , onUrlChange = UrlChanged
+        , onUrlRequest = LinkClicked
+        }
+
+
+
+---- PORT ----
+
+
+port saveTodos : Encode.Value -> Cmd msg
+
+
+port todoReader : (Encode.Value -> msg) -> Sub msg
 
 
 
@@ -59,11 +87,9 @@ emptyTodoList =
     TodoList []
 
 
-hasTodo : TodoList -> Bool
-hasTodo (TodoList list) =
-    list
-        |> List.isEmpty
-        |> not
+isEmpty : TodoList -> Bool
+isEmpty (TodoList list) =
+    List.isEmpty list
 
 
 addTodo : String -> TodoList -> TodoList
@@ -75,19 +101,16 @@ addTodo label (TodoList todos) =
         newLabel =
             String.trim label
     in
-    TodoList <|
-        todos
-            ++ [ TodoRecord newId newLabel Active ]
+    TodoList (todos ++ [ TodoRecord newId newLabel Active ])
 
 
 removeTodo : Int -> TodoList -> TodoList
 removeTodo id (TodoList todos) =
-    TodoList <|
-        List.filter (\todo -> todo.id /= id) todos
+    TodoList (List.filter ((/=) id << .id) todos)
 
 
 mapTodo : Int -> (TodoRecord -> TodoRecord) -> TodoList -> TodoList
-mapTodo id f (TodoList todos) =
+mapTodo id action (TodoList todos) =
     TodoList <|
         List.map
             (\todo ->
@@ -95,7 +118,7 @@ mapTodo id f (TodoList todos) =
                     todo
 
                 else
-                    f todo
+                    action todo
             )
             todos
 
@@ -110,44 +133,44 @@ unCompleteTodo id list =
     mapTodo id (\todo -> { todo | status = Active }) list
 
 
-getAllTodos : TodoList -> List Todo
-getAllTodos (TodoList list) =
-    List.map (\todo -> Todo todo) list
-
-
-getActiveTodos : TodoList -> List Todo
-getActiveTodos list =
-    List.filter (not << isCompleted) (getAllTodos list)
-
-
-getCompletedTodos : TodoList -> List Todo
-getCompletedTodos list =
-    List.filter isCompleted (getAllTodos list)
-
-
 clearCompleted : TodoList -> TodoList
 clearCompleted (TodoList list) =
-    TodoList <| List.filter (\todo -> todo.status /= Completed) list
+    TodoList (List.filter ((/=) Completed << .status) list)
 
 
 completeAll : TodoList -> TodoList
 completeAll (TodoList list) =
-    TodoList <| List.map (\todo -> { todo | status = Completed }) list
+    TodoList (List.map (\todo -> { todo | status = Completed }) list)
 
 
 unCompleteAll : TodoList -> TodoList
 unCompleteAll (TodoList list) =
-    TodoList <| List.map (\todo -> { todo | status = Active }) list
+    TodoList (List.map (\todo -> { todo | status = Active }) list)
+
+
+toTodos : List TodoRecord -> List Todo
+toTodos =
+    List.map Todo
+
+
+getAllTodos : TodoList -> List Todo
+getAllTodos (TodoList list) =
+    toTodos list
+
+
+getActiveTodos : TodoList -> List Todo
+getActiveTodos (TodoList list) =
+    toTodos (List.filter ((==) Active << .status) list)
+
+
+getCompletedTodos : TodoList -> List Todo
+getCompletedTodos (TodoList list) =
+    toTodos (List.filter ((==) Completed << .status) list)
 
 
 isCompleted : Todo -> Bool
 isCompleted (Todo { status }) =
-    case status of
-        Active ->
-            False
-
-        Completed ->
-            True
+    status == Completed
 
 
 todoLabel : Todo -> String
@@ -158,6 +181,38 @@ todoLabel (Todo { label }) =
 todoId : Todo -> Int
 todoId (Todo { id }) =
     id
+
+
+toJson : TodoList -> Encode.Value
+toJson (TodoList list) =
+    Encode.list
+        (\todo ->
+            Encode.object
+                [ ( "id", Encode.int todo.id )
+                , ( "label", Encode.string todo.label )
+                , ( "completed", Encode.bool (todo.status == Completed) )
+                ]
+        )
+        list
+
+
+fromJson : Decode.Decoder TodoList
+fromJson =
+    let
+        buildTodo id label completed =
+            if completed then
+                TodoRecord id label Completed
+
+            else
+                TodoRecord id label Active
+    in
+    Decode.map3
+        buildTodo
+        (Decode.field "id" Decode.int)
+        (Decode.field "label" Decode.string)
+        (Decode.field "completed" Decode.bool)
+        |> Decode.list
+        |> Decode.map TodoList
 
 
 
@@ -173,6 +228,18 @@ type Msg
     | FieldChanged String
     | ClearCompleted
     | ToggleAll Bool
+    | ReceivedTodos Encode.Value
+
+
+updateWithStorage : Msg -> Model -> ( Model, Cmd Msg )
+updateWithStorage msg model =
+    let
+        ( newModel, cmd ) =
+            update msg model
+    in
+    ( newModel
+    , Cmd.batch [ saveTodos (toJson newModel.todos), cmd ]
+    )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -260,6 +327,16 @@ update msg model =
             , Cmd.none
             )
 
+        ReceivedTodos value ->
+            ( case Decode.decodeValue fromJson value of
+                Ok list ->
+                    { model | todos = list }
+
+                Err _ ->
+                    model
+            , Cmd.none
+            )
+
 
 
 ---- ROUTE ----
@@ -338,7 +415,7 @@ viewTodos : TodoList -> Route -> Html Msg
 viewTodos todos route =
     let
         allSelected =
-            List.all isCompleted <| getAllTodos todos
+            List.all isCompleted (getAllTodos todos)
 
         selectedTodos =
             case route of
@@ -353,7 +430,7 @@ viewTodos todos route =
     in
     section
         [ class "main"
-        , hidden ((not << hasTodo) todos)
+        , hidden (isEmpty todos)
         ]
         [ input
             [ id "toggle-all"
@@ -401,18 +478,14 @@ viewFooter : TodoList -> Route -> Html Msg
 viewFooter todos route =
     let
         entriesCompleted =
-            todos
-                |> getCompletedTodos
-                |> List.length
+            List.length (getCompletedTodos todos)
 
         entriesLeft =
-            todos
-                |> getActiveTodos
-                |> List.length
+            List.length (getActiveTodos todos)
     in
     footer
         [ class "footer"
-        , hidden ((not << hasTodo) todos)
+        , hidden (isEmpty todos)
         ]
         [ lazy viewCount entriesLeft
         , lazy viewFilters route
@@ -484,19 +557,3 @@ viewLink currentRoute { path, label, route } =
             ]
             [ text label ]
         ]
-
-
-
----- PROGRAM ----
-
-
-main : Program () Model Msg
-main =
-    Browser.application
-        { view = view
-        , init = \_ -> init
-        , update = update
-        , subscriptions = always Sub.none
-        , onUrlChange = UrlChanged
-        , onUrlRequest = LinkClicked
-        }
