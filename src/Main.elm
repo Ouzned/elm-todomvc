@@ -1,17 +1,18 @@
 module Main exposing (..)
 
-import Browser exposing (UrlRequest(..))
+import Browser
 import Browser.Navigation as Nav
-import Hotkeys exposing (onKeyCode)
-import Html exposing (Html, a, button, div, footer, h1, header, input, li, section, span, strong, text, ul)
-import Html.Attributes exposing (autofocus, checked, class, href, name, placeholder, type_, value)
-import Html.Attributes.Extra exposing (attributeIf)
-import Html.Events exposing (onCheck, onClick, onInput)
-import Html.Extra exposing (viewIf)
-import List exposing (length)
-import String exposing (fromInt, isEmpty, trim)
+import Hotkeys
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Attributes.Extra exposing (..)
+import Html.Events exposing (..)
+import Html.Extra exposing (..)
+import Html.Lazy exposing (lazy, lazy2)
+import List
+import String
 import Url
-import Url.Parser exposing (Parser, fragment, map, parse)
+import Url.Parser exposing (..)
 
 
 
@@ -129,6 +130,16 @@ clearCompleted (TodoList list) =
     TodoList <| List.filter (\todo -> todo.status /= Completed) list
 
 
+completeAll : TodoList -> TodoList
+completeAll (TodoList list) =
+    TodoList <| List.map (\todo -> { todo | status = Completed }) list
+
+
+unCompleteAll : TodoList -> TodoList
+unCompleteAll (TodoList list) =
+    TodoList <| List.map (\todo -> { todo | status = Active }) list
+
+
 isCompleted : Todo -> Bool
 isCompleted (Todo { status }) =
     case status of
@@ -161,13 +172,14 @@ type Msg
     | LinkClicked Browser.UrlRequest
     | FieldChanged String
     | ClearCompleted
+    | ToggleAll Bool
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         NewTodo ->
-            if isEmpty model.fieldText then
+            if String.isEmpty model.fieldText then
                 ( model, Cmd.none )
 
             else
@@ -179,11 +191,17 @@ update msg model =
                 )
 
         CheckTodo id isChecked ->
-            ( if isChecked then
-                { model | todos = completeTodo id model.todos }
+            let
+                action =
+                    if isChecked then
+                        completeTodo
 
-              else
-                { model | todos = unCompleteTodo id model.todos }
+                    else
+                        unCompleteTodo
+            in
+            ( { model
+                | todos = action id model.todos
+              }
             , Cmd.none
             )
 
@@ -204,6 +222,21 @@ update msg model =
         UrlChanged url ->
             ( { model
                 | route = parseRoute url
+              }
+            , Cmd.none
+            )
+
+        ToggleAll isChecked ->
+            let
+                action =
+                    if isChecked then
+                        completeAll
+
+                    else
+                        unCompleteAll
+            in
+            ( { model
+                | todos = action model.todos
               }
             , Cmd.none
             )
@@ -267,22 +300,15 @@ parseRoute url =
 
 view : Model -> Browser.Document Msg
 view model =
-    let
-        viewIfHasTodo msg =
-            viewIf (hasTodo model.todos) msg
-    in
     { title = "Elm • TodoMVC"
     , body =
         [ div [ class "todomvc-wrapper" ]
             [ section
                 [ class "todoapp" ]
-              <|
-                [ viewHeader model.fieldText ]
-                    ++ List.map
-                        viewIfHasTodo
-                        [ viewTodos model
-                        , viewFooter model
-                        ]
+                [ lazy viewHeader model.fieldText
+                , lazy2 viewTodos model.todos model.route
+                , lazy2 viewFooter model.todos model.route
+                ]
             ]
         ]
     }
@@ -302,15 +328,18 @@ viewHeader fieldText =
             , name "newTodo"
             , value fieldText
             , onInput FieldChanged
-            , onKeyCode 13 NewTodo
+            , Hotkeys.onKeyCode 13 NewTodo
             ]
             []
         ]
 
 
-viewTodos : Model -> Html Msg
-viewTodos { todos, route } =
+viewTodos : TodoList -> Route -> Html Msg
+viewTodos todos route =
     let
+        allSelected =
+            List.all isCompleted <| getAllTodos todos
+
         selectedTodos =
             case route of
                 AllTodos ->
@@ -323,8 +352,22 @@ viewTodos { todos, route } =
                     getCompletedTodos todos
     in
     section
-        [ class "main" ]
-        [ ul
+        [ class "main"
+        , hidden ((not << hasTodo) todos)
+        ]
+        [ input
+            [ id "toggle-all"
+            , type_ "checkbox"
+            , class "toggle-all"
+            , name "toggle"
+            , onCheck ToggleAll
+            , checked allSelected
+            ]
+            []
+        , label
+            [ for "toggle-all" ]
+            [ text "Mark all as complete" ]
+        , ul
             [ class "todo-list" ]
             (List.map viewTodo selectedTodos)
         ]
@@ -333,13 +376,13 @@ viewTodos { todos, route } =
 viewTodo : Todo -> Html Msg
 viewTodo todo =
     li
-        [ attributeIf (isCompleted todo) (class "completed") ]
+        [ classList [ ( "completed", isCompleted todo ) ] ]
         [ div
             [ class "view" ]
             [ input
                 [ type_ "checkbox"
                 , class "toggle"
-                , onCheck (CheckTodo <| todoId todo)
+                , onCheck (CheckTodo (todoId todo))
                 , checked False
                 , attributeIf (isCompleted todo) (checked True)
                 ]
@@ -348,34 +391,36 @@ viewTodo todo =
                 []
                 [ text <| todoLabel todo ]
             , button
-                [ class "destroy", onClick (DeleteTodo <| todoId todo) ]
+                [ class "destroy", onClick (DeleteTodo (todoId todo)) ]
                 []
             ]
         ]
 
 
-viewFooter : Model -> Html Msg
-viewFooter { todos, route } =
+viewFooter : TodoList -> Route -> Html Msg
+viewFooter todos route =
     let
-        completed =
+        entriesCompleted =
             todos
                 |> getCompletedTodos
                 |> List.length
 
-        active =
+        entriesLeft =
             todos
                 |> getActiveTodos
                 |> List.length
     in
     footer
-        [ class "footer" ]
-        [ viewCount active
-        , viewFilters route
-        , viewReset completed
+        [ class "footer"
+        , hidden ((not << hasTodo) todos)
+        ]
+        [ lazy viewCount entriesLeft
+        , lazy viewFilters route
+        , lazy viewReset entriesCompleted
         ]
 
 
-viewCount : Int -> Html msg
+viewCount : Int -> Html Msg
 viewCount count =
     let
         countLabel =
@@ -389,7 +434,7 @@ viewCount count =
         [ class "todo-count" ]
         [ strong
             []
-            [ text <| String.fromInt count ]
+            [ text (String.fromInt count) ]
         , span
             []
             [ text countLabel ]
@@ -402,8 +447,11 @@ viewCount count =
 viewReset : Int -> Html Msg
 viewReset completed =
     button
-        [ class "clear-completed", onClick ClearCompleted ]
-        [ text <| "Clear completed (" ++ String.fromInt completed ++ ")" ]
+        [ class "clear-completed"
+        , hidden (completed == 0)
+        , onClick ClearCompleted
+        ]
+        [ text ("Clear completed (" ++ String.fromInt completed ++ ")") ]
 
 
 viewFilters : Route -> Html msg
