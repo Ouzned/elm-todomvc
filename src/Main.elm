@@ -13,6 +13,7 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import List
 import String
+import TodoList as T
 import Url
 import Url.Parser exposing (..)
 
@@ -47,172 +48,19 @@ port todoReader : (Encode.Value -> msg) -> Sub msg
 ---- MODEL ----
 
 
-type alias Model =
-    { todos : TodoList
-    , key : Nav.Key
-    , route : Route
-    , fieldText : String
-    }
-
-
-type TodoList
-    = TodoList (List TodoRecord)
-
-
-type alias TodoRecord =
-    { id : Int
-    , label : String
-    , status : Status
-    }
-
-
-type Todo
-    = Todo TodoRecord
-
-
-type Status
-    = Active
-    | Completed
-
-
 init : Url.Url -> Nav.Key -> ( Model, Cmd Msg )
 init url key =
-    ( Model emptyTodoList key (parseRoute url) ""
+    ( Model T.empty key (parseRoute url) ""
     , Cmd.none
     )
 
 
-emptyTodoList : TodoList
-emptyTodoList =
-    TodoList []
-
-
-isEmpty : TodoList -> Bool
-isEmpty (TodoList list) =
-    List.isEmpty list
-
-
-addTodo : String -> TodoList -> TodoList
-addTodo label (TodoList todos) =
-    let
-        newId =
-            List.length todos + 1
-
-        newLabel =
-            String.trim label
-    in
-    TodoList (todos ++ [ TodoRecord newId newLabel Active ])
-
-
-removeTodo : Int -> TodoList -> TodoList
-removeTodo id (TodoList todos) =
-    TodoList (List.filter ((/=) id << .id) todos)
-
-
-mapTodo : Int -> (TodoRecord -> TodoRecord) -> TodoList -> TodoList
-mapTodo id action (TodoList todos) =
-    TodoList <|
-        List.map
-            (\todo ->
-                if todo.id /= id then
-                    todo
-
-                else
-                    action todo
-            )
-            todos
-
-
-completeTodo : Int -> TodoList -> TodoList
-completeTodo id list =
-    mapTodo id (\todo -> { todo | status = Completed }) list
-
-
-unCompleteTodo : Int -> TodoList -> TodoList
-unCompleteTodo id list =
-    mapTodo id (\todo -> { todo | status = Active }) list
-
-
-clearCompleted : TodoList -> TodoList
-clearCompleted (TodoList list) =
-    TodoList (List.filter ((/=) Completed << .status) list)
-
-
-completeAll : TodoList -> TodoList
-completeAll (TodoList list) =
-    TodoList (List.map (\todo -> { todo | status = Completed }) list)
-
-
-unCompleteAll : TodoList -> TodoList
-unCompleteAll (TodoList list) =
-    TodoList (List.map (\todo -> { todo | status = Active }) list)
-
-
-toTodos : List TodoRecord -> List Todo
-toTodos =
-    List.map Todo
-
-
-getAllTodos : TodoList -> List Todo
-getAllTodos (TodoList list) =
-    toTodos list
-
-
-getActiveTodos : TodoList -> List Todo
-getActiveTodos (TodoList list) =
-    toTodos (List.filter ((==) Active << .status) list)
-
-
-getCompletedTodos : TodoList -> List Todo
-getCompletedTodos (TodoList list) =
-    toTodos (List.filter ((==) Completed << .status) list)
-
-
-isCompleted : Todo -> Bool
-isCompleted (Todo { status }) =
-    status == Completed
-
-
-todoLabel : Todo -> String
-todoLabel (Todo { label }) =
-    label
-
-
-todoId : Todo -> Int
-todoId (Todo { id }) =
-    id
-
-
-toJson : TodoList -> Encode.Value
-toJson (TodoList list) =
-    Encode.list
-        (\todo ->
-            Encode.object
-                [ ( "id", Encode.int todo.id )
-                , ( "label", Encode.string todo.label )
-                , ( "completed", Encode.bool (todo.status == Completed) )
-                ]
-        )
-        list
-
-
-fromJson : Decode.Decoder TodoList
-fromJson =
-    let
-        buildTodo id label completed =
-            if completed then
-                TodoRecord id label Completed
-
-            else
-                TodoRecord id label Active
-    in
-    Decode.map3
-        buildTodo
-        (Decode.field "id" Decode.int)
-        (Decode.field "label" Decode.string)
-        (Decode.field "completed" Decode.bool)
-        |> Decode.list
-        |> Decode.map TodoList
+type alias Model =
+    { todos : T.TodoList
+    , key : Nav.Key
+    , route : Route
+    , fieldText : String
+    }
 
 
 
@@ -238,7 +86,7 @@ updateWithStorage msg model =
             update msg model
     in
     ( newModel
-    , Cmd.batch [ saveTodos (toJson newModel.todos), cmd ]
+    , Cmd.batch [ saveTodos (T.toJson newModel.todos), cmd ]
     )
 
 
@@ -251,7 +99,7 @@ update msg model =
 
             else
                 ( { model
-                    | todos = addTodo model.fieldText model.todos
+                    | todos = T.add model.fieldText model.todos
                     , fieldText = ""
                   }
                 , Cmd.none
@@ -261,10 +109,10 @@ update msg model =
             let
                 action =
                     if isChecked then
-                        completeTodo
+                        T.complete
 
                     else
-                        unCompleteTodo
+                        T.unComplete
             in
             ( { model
                 | todos = action id model.todos
@@ -274,7 +122,7 @@ update msg model =
 
         DeleteTodo id ->
             ( { model
-                | todos = removeTodo id model.todos
+                | todos = T.delete id model.todos
               }
             , Cmd.none
             )
@@ -297,10 +145,10 @@ update msg model =
             let
                 action =
                     if isChecked then
-                        completeAll
+                        T.completeAll
 
                     else
-                        unCompleteAll
+                        T.unCompleteAll
             in
             ( { model
                 | todos = action model.todos
@@ -322,13 +170,13 @@ update msg model =
 
         ClearCompleted ->
             ( { model
-                | todos = clearCompleted model.todos
+                | todos = T.clearCompleted model.todos
               }
             , Cmd.none
             )
 
         ReceivedTodos value ->
-            ( case Decode.decodeValue fromJson value of
+            ( case Decode.decodeValue T.fromJson value of
                 Ok list ->
                     { model | todos = list }
 
@@ -363,12 +211,12 @@ toRoute string =
 
 fragmentParser : Parser (String -> a) a
 fragmentParser =
-    fragment <| Maybe.withDefault "/"
+    fragment (Maybe.withDefault "/")
 
 
 parseRoute : Url.Url -> Route
 parseRoute url =
-    toRoute <| parse fragmentParser url
+    toRoute (parse fragmentParser url)
 
 
 
@@ -411,26 +259,26 @@ viewHeader fieldText =
         ]
 
 
-viewTodos : TodoList -> Route -> Html Msg
+viewTodos : T.TodoList -> Route -> Html Msg
 viewTodos todos route =
     let
         allSelected =
-            List.all isCompleted (getAllTodos todos)
+            List.all T.isCompleted (T.getAll todos)
 
         selectedTodos =
             case route of
                 AllTodos ->
-                    getAllTodos todos
+                    T.getAll todos
 
                 ActiveTodos ->
-                    getActiveTodos todos
+                    T.getActive todos
 
                 CompletedTodos ->
-                    getCompletedTodos todos
+                    T.getCompleted todos
     in
     section
         [ class "main"
-        , hidden (isEmpty todos)
+        , hidden (T.isEmpty todos)
         ]
         [ input
             [ id "toggle-all"
@@ -450,42 +298,42 @@ viewTodos todos route =
         ]
 
 
-viewTodo : Todo -> Html Msg
+viewTodo : T.Todo -> Html Msg
 viewTodo todo =
     li
-        [ classList [ ( "completed", isCompleted todo ) ] ]
+        [ classList [ ( "completed", T.isCompleted todo ) ] ]
         [ div
             [ class "view" ]
             [ input
                 [ type_ "checkbox"
                 , class "toggle"
-                , onCheck (CheckTodo (todoId todo))
+                , onCheck (CheckTodo (T.id todo))
                 , checked False
-                , attributeIf (isCompleted todo) (checked True)
+                , attributeIf (T.isCompleted todo) (checked True)
                 ]
                 []
             , Html.label
                 []
-                [ text <| todoLabel todo ]
+                [ text <| T.label todo ]
             , button
-                [ class "destroy", onClick (DeleteTodo (todoId todo)) ]
+                [ class "destroy", onClick (DeleteTodo (T.id todo)) ]
                 []
             ]
         ]
 
 
-viewFooter : TodoList -> Route -> Html Msg
+viewFooter : T.TodoList -> Route -> Html Msg
 viewFooter todos route =
     let
         entriesCompleted =
-            List.length (getCompletedTodos todos)
+            List.length (T.getCompleted todos)
 
         entriesLeft =
-            List.length (getActiveTodos todos)
+            List.length (T.getActive todos)
     in
     footer
         [ class "footer"
-        , hidden (isEmpty todos)
+        , hidden (T.isEmpty todos)
         ]
         [ lazy viewCount entriesLeft
         , lazy viewFilters route
