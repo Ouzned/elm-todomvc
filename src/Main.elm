@@ -15,7 +15,7 @@ import List
 import String
 import TodoList as T
 import Url
-import Url.Parser exposing (..)
+import Url.Parser exposing (Parser, fragment, parse)
 
 
 
